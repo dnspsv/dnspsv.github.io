@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Sua conta — SetaZen</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .state { display: none; }
+    .state.on { display: block; }
+    label { display: block; margin: 16px 0 6px; color: var(--muted); font-size: 0.95rem; }
+    input[type=password] {
+      width: 100%; padding: 12px 14px; font-size: 1rem;
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 12px;
+    }
+    button {
+      margin-top: 20px; width: 100%; padding: 14px; font-size: 1rem; font-weight: 700;
+      background: var(--accent); color: var(--bg); border: 0; border-radius: 999px; cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .err { color: #ff8a80; margin-top: 12px; }
+    .big { font-size: 3rem; text-align: center; margin: 0; }
+  </style>
+</head>
+<body>
+<main>
+  <header><a class="brand" href="./">SetaZen</a></header>
+
+  <section id="loading" class="state on card">
+    <p>Verificando o link…</p>
+  </section>
+
+  <section id="confirmed" class="state card">
+    <p class="big">✅</p>
+    <h1 id="confirmed-title">E-mail confirmado!</h1>
+    <p id="confirmed-text">Tudo certo. Volte ao app SetaZen e entre com seu e-mail e senha.</p>
+  </section>
+
+  <section id="reset" class="state card">
+    <h1>Criar nova senha</h1>
+    <p class="muted" id="reset-email"></p>
+    <form id="reset-form">
+      <label for="pw1">Nova senha (mínimo 6 caracteres)</label>
+      <input id="pw1" type="password" minlength="6" autocomplete="new-password" required>
+      <label for="pw2">Repita a nova senha</label>
+      <input id="pw2" type="password" minlength="6" autocomplete="new-password" required>
+      <p class="err" id="reset-err"></p>
+      <button type="submit" id="reset-btn">Salvar nova senha</button>
+    </form>
+  </section>
+
+  <section id="reset-done" class="state card">
+    <p class="big">🔑</p>
+    <h1>Senha alterada!</h1>
+    <p>Volte ao app SetaZen e entre com a nova senha.</p>
+  </section>
+
+  <section id="failed" class="state card">
+    <p class="big">⚠️</p>
+    <h1>Link inválido ou expirado</h1>
+    <p id="failed-text">Este link já foi usado ou passou do prazo de 1 hora. Peça um novo pelo app.</p>
+    <p class="muted">Precisa de ajuda? <a href="mailto:suporte.dns.apps@gmail.com">suporte.dns.apps@gmail.com</a></p>
+  </section>
+
+  <footer>
+    <a href="./">Início</a> · <a href="privacy.html">Política de Privacidade</a> · <a href="terms.html">Termos de Uso</a>
+  </footer>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+  // Destino dos links dos e-mails de autenticação (site_url do Supabase).
+  // Os e-mails mandam ?token_hash=...&type=... e a página valida aqui com
+  // verifyOtp — ver supabase/templates/build_templates.py.
+  const SUPABASE_URL = 'https://wfaitroecmsgsyethgah.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_pLcuYssg0KvXkbOmXUcUXw_-gCrmkZE';
+
+  const show = (id) => {
+    document.querySelectorAll('.state').forEach((el) => el.classList.remove('on'));
+    document.getElementById(id).classList.add('on');
+  };
+
+  const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+
+  async function main() {
+    const params = new URLSearchParams(location.search);
+    const hash = new URLSearchParams(location.hash.slice(1));
+    const tokenHash = params.get('token_hash');
+    const type = params.get('type');
+
+    // Erro devolvido pelo próprio Supabase (ex.: link padrão expirado).
+    if (hash.get('error') || params.get('error')) { show('failed'); return; }
+    // Modelo padrão do Supabase ({{ .ConfirmationURL }}): o e-mail já foi
+    // verificado no servidor antes de chegar aqui (?code= no fluxo PKCE ou
+    // #access_token no implícito) — só confirma para o jogador.
+    if (!tokenHash && (params.get('code') || hash.get('access_token'))) {
+      history.replaceState(null, '', location.pathname);
+      show('confirmed');
+      return;
+    }
+    if (!tokenHash || !type) { location.replace('./'); return; }
+
+    const { data, error } = await client.auth.verifyOtp({ token_hash: tokenHash, type });
+    // Remove o token da barra de endereço (não fica no histórico).
+    history.replaceState(null, '', location.pathname);
+    if (error) { show('failed'); return; }
+
+    if (type === 'recovery') {
+      document.getElementById('reset-email').textContent = data.user?.email ? 'Conta: ' + data.user.email : '';
+      show('reset');
+      return;
+    }
+    if (type === 'email_change') {
+      document.getElementById('confirmed-title').textContent = 'Novo e-mail confirmado!';
+      document.getElementById('confirmed-text').textContent = 'Use o novo e-mail para entrar no app SetaZen.';
+    }
+    show('confirmed');
+  }
+
+  document.getElementById('reset-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const pw1 = document.getElementById('pw1').value;
+    const pw2 = document.getElementById('pw2').value;
+    const err = document.getElementById('reset-err');
+    const btn = document.getElementById('reset-btn');
+    err.textContent = '';
+    if (pw1.length < 6) { err.textContent = 'A senha precisa ter pelo menos 6 caracteres.'; return; }
+    if (pw1 !== pw2) { err.textContent = 'As senhas não são iguais.'; return; }
+    btn.disabled = true;
+    const { error } = await client.auth.updateUser({ password: pw1 });
+    btn.disabled = false;
+    if (error) {
+      err.textContent = error.message.includes('different')
+        ? 'A nova senha precisa ser diferente da anterior.'
+        : 'Não foi possível salvar. Tente de novo ou peça um novo link pelo app.';
+      return;
+    }
+    await client.auth.signOut();
+    show('reset-done');
+  });
+
+  main().catch(() => show('failed'));
+</script>
+</body>
+</html>
